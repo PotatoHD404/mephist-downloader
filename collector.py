@@ -1,87 +1,72 @@
 import json
-from aiohttp import ClientSession
-import asyncio
-import time
-import aiofiles as aiof
-from aiohttp.client_exceptions import ClientOSError, ServerDisconnectedError
+import requests
+import lxml.html
+
+BASE_PATH = '/Users/potatohd/Documents/mephist/downloaded'
 
 
-async def fetch(game, session, sem):
-    async with sem:
-        res = ''
-        link = f'https://hsreplay.net/api/v1/games/{game["id"]}/?format=json'
-        while not res:
-            try:
-                async with session.get(link, timeout=5) as response:
-                    print(f'Fetching game url {game["id"]}')
-                    url = (await response.json())['replay_xml']
-                async with session.get(url, timeout=5) as response:
-                    print(f'Fetching game {game["id"]}')
-                    res = await response.text()
-            except (ClientOSError, ServerDisconnectedError, asyncio.TimeoutError, KeyError) as e:
-                if type(e) == asyncio.TimeoutError:
-                    print('Timeout error')
-                elif type(e) == KeyError:
-                    return
-                else:
-                    print(e)
-        game['xml'] = res
-        await write_file(game, fr'D:\datasets and shit\hs_games\{game["id"]}.json')
+def fetch(link, return_text=False):
+    done = False
+    data = None
+    while not done:
+        try:
+            data = requests.get(link).text
+            done = True
+        except Exception as e:
+            print(e, type(e))
+    if return_text:
+        return data
+
+    html = lxml.html.fromstring(data)
+    return html
 
 
-async def write_file(data, path):
+def write_file(data, path):
     print(f'Writing to {path}')
     done = False
     while not done:
         try:
-            async with aiof.open(path, "w") as out:
-                await out.write(json.dumps(data))
+            with open(path, "w") as out:
+                out.write(json.dumps(data))
                 done = True
         except Exception as e:
-            # (ConnectionResetError, OSError)
             print(e, type(e))
 
 
-async def main():
-    tasks = []
-    # count = 0
-    # create instance of Semaphore
-    # Create client session that will ensure we dont open new connection
-    # per each request.
-    async with ClientSession() as session:
-        prev = set()
-        sem = asyncio.Semaphore(200)
-        while True:
-            start = time.time()
-            async with session.get('https://hsreplay.net/api/v1/live/replay_feed/?format=json') as response:
-                games = (await response.json())["data"]
-                print('Collected games')
-                # print(prev, {game['id'] for game in games}, sep='\n')
-                curr = {game['id'] for game in games}
-                difference = prev.union(curr).difference(prev)
-                print(f'Difference between prev and now is {len(difference)} games')
-                if len(difference) > 200:
-                    curr = difference
-                    for game_id in curr:
-                        game = [game for game in games if game_id == game['id']][0]
-                        task = asyncio.ensure_future(fetch(game, session, sem))
-                        tasks.append(task)
-                    await asyncio.gather(*tasks)
-                    print('Fetched all games')
-                    tasks = []
-                    prev = curr
+# noinspection PyDictCreation
+def main():
+    prepods_page = fetch('http://www.mephist.ru/mephist/prepods.nsf/teachers')
+    prepod_links = map(lambda el: 'http://www.mephist.ru' + el.attrib['href'].replace("\\", "/"),
+                       prepods_page.xpath('/html/body/form/table[3]/tr[1]/td[5]/table/tr/td/a'))
+    for i, link in enumerate(prepod_links):
+        prepod_page = fetch(link)
+        # print(dir(prepod_page.xpath("/html/body/table[3]/tr[1]/td[3]/table[1]/tr[6]/td[2]")[0]))
+        # print(prepod_page.xpath("/html/body/table[3]/tr[1]/td[3]/table[1]/tr[6]/td[2]/a")[0].attrib['href'])
+        prepod_info = {}
+        # print(prepod_page.xpath("/html/body/table[3]/tr[1]/td[3]/table[1]/tr[6]/td[2]/@href"))
+        prepod_info["Имя"] = prepod_page.xpath("/html/body/table[3]/tr[1]/td[3]/table[1]/tr[1]/td[2]/b/font")[0].text
+        prepod_info["Предметы"] = [el.text for el in
+                                   prepod_page.xpath(
+                                       "/html/body/table[3]/tr[1]/td[3]/table[1]/tr[2]/td[2]/table/tr/td/div[1]")]
+        prepod_info["Факультет"] = prepod_page.xpath("/html/body/table[3]/tr[1]/td[3]/table[1]/tr[3]/td[2]")[0].text
+        prepod_info["Кафедра"] = prepod_page.xpath("/html/body/table[3]/tr[1]/td[3]/table[1]/tr[4]/td[2]")[0].text
+        prepod_info["Перлы"] = prepod_page.xpath("/html/body/table[3]/tr[1]/td[3]/table[1]/tr[6]/td[2]/a")[0].attrib[
+            'href']
+        prepod_info["Материалы"] = ['http://www.mephist.ru' + el.attrib['href'].replace('\\', '/') for el in
+                                    prepod_page.xpath("/html/body/table[3]/tr[1]/td[3]/table[2]/tr/td[1]/a")]
+        prepod_info["Информация"] = prepod_page.xpath("/html/body/table[3]/tr[1]/td[3]/text()")
+        prepod_info["Оценка отзыва по почте"] = prepod_page.xpath('//*[@id="rez"]')[0].text_content()
+        prepod_info["Имена отзывов по почте"] = [el.text for el in
+                                                 prepod_page.xpath('/html/body/table[3]/tr[1]/td[3]/a')]
+        prepod_info["Фото"] = ['http://www.mephist.ru' + el.attrib['src'] for el in
+                               prepod_page.xpath('/html/body/table[3]/tr[1]/td[3]/img')]
 
-            end = time.time() - start
-            if 300 - end > 0:
-                await asyncio.sleep(300 - end)
-            print(f'It lasted for {end} seconds')
-            # print(count)
+        prepod_info["Статы"] = prepod_page.xpath('/html/body/table[3]/tr[1]/td[3]/p[2]')[0].text_content()
+        review_links = ['http://www.mephist.ru' + el.attrib['href'].replace('\\', '/') for el in
+                        prepod_page.xpath('/html/body/table[3]/tr[1]/td[3]/table[4]/tr/td/a')]
+        prepod_info["Отзывы"] = review_links
+        write_file(prepod_info, BASE_PATH + f'/{i}.json')
 
 
 if __name__ == "__main__":
-    # start_time = time.time()
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(main())
-    # print("--- %s seconds ---" % (time.time() - start_time))
-
-# https://hsreplay.net/api/v1/live/replay_feed/
+    main()
