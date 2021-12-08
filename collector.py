@@ -1,4 +1,8 @@
+import errno
 import json
+import os
+import time
+
 import requests
 import lxml.html
 
@@ -14,6 +18,7 @@ def fetch(link, return_text=False):
             done = True
         except Exception as e:
             print(e, type(e))
+            time.sleep(0.05)
     if return_text:
         return data
 
@@ -24,6 +29,12 @@ def fetch(link, return_text=False):
 def write_file(data, path):
     print(f'Writing to {path}')
     done = False
+    if not os.path.exists(os.path.dirname(path)):
+        try:
+            os.makedirs(os.path.dirname(path))
+        except OSError as exc:  # Guard against race condition
+            if exc.errno != errno.EEXIST:
+                raise
     while not done:
         try:
             with open(path, "w") as out:
@@ -38,6 +49,8 @@ def main():
     prepods_page = fetch('http://www.mephist.ru/mephist/prepods.nsf/teachers')
     prepod_links = map(lambda el: 'http://www.mephist.ru' + el.attrib['href'].replace("\\", "/"),
                        prepods_page.xpath('/html/body/form/table[3]/tr[1]/td[5]/table/tr/td/a'))
+    for i in range(408):
+        next(prepod_links)
     for i, link in enumerate(prepod_links):
         prepod_page = fetch(link)
         # print(dir(prepod_page.xpath("/html/body/table[3]/tr[1]/td[3]/table[1]/tr[6]/td[2]")[0]))
@@ -65,7 +78,7 @@ def main():
         review_links = ['http://www.mephist.ru' + el.attrib['href'].replace('\\', '/') for el in
                         prepod_page.xpath('/html/body/table[3]/tr[1]/td[3]/table[4]/tr/td/a')]
         prepod_info["Отзывы"] = review_links
-        write_file(prepod_info, BASE_PATH + f'/{i}.json')
+        write_file(prepod_info, BASE_PATH + f'/{i + 407}.json')
 
 
 if __name__ == "__main__":
